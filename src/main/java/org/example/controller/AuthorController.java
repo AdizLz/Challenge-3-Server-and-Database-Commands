@@ -2,9 +2,8 @@ package org.example.controller;
 
 import org.example.view.AuthorView;
 import org.example.model.Author;
-// --- Libraries needed for REAL JSON parsing ---
+import org.example.model.Publication;
 import com.google.gson.Gson;
-import org.example.model.SearchResponse;
 // --- HTTP Libraries ---
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -13,55 +12,52 @@ import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
 
 import java.io.IOException;
-import java.util.List;
 import java.util.Collections;
-import java.util.stream.Collectors; // For list transformation
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class AuthorController {
 
-    // 🔑 YOUR LAST WORKING API KEY
-    private final String API_KEY = "bd83c6ba82b4095b98b58abc29171e382d9449f163b85ea9416d95f594d0503e";
+    private final String API_KEY = "619324adda98afcccd33191b4106bc08cab6be29b7180d5304c8067b585a568d";
     private final String BASE_URL = "https://serpapi.com/search";
 
-    // Reference to the View (for MVC interaction)
     private final AuthorView view;
 
     public AuthorController(AuthorView view) {
         this.view = view;
     }
 
-    /**
-     * Starts the search process: gets the query, searches, and displays results.
-     */
     public void startSearchProcess() {
         try {
-            String query = view.getSearchQuery();
+            String authorId = view.getSearchQuery(); // ahora pedirá el ID
 
-            if (query == null || query.isBlank()) {
-                view.displayError("Search query cannot be empty.");
+            if (authorId == null || authorId.isBlank()) {
+                view.displayError("Author ID cannot be empty.");
                 return;
             }
 
-            List<Author> results = searchAuthors(query);
-            view.displayResults(results);
+            Author author = searchAuthorById(authorId);
+            if (author != null) {
+                view.displayResults(Collections.singletonList(author));
+            } else {
+                view.displayError("No author found with that ID.");
+            }
 
         } catch (IOException e) {
             view.displayError("I/O Error (Network): " + e.getMessage());
         } catch (Exception e) {
-            view.displayError("An unexpected error occurred: " + e.getMessage());
+            view.displayError("Unexpected error: " + e.getMessage());
         }
     }
 
     /**
-     * Executes the API query and parses the JSON response into a list of Authors.
+     * Busca directamente el perfil de un autor por su ID de Google Scholar
      */
-    private List<Author> searchAuthors(String query) throws IOException {
-
-        // Use engine=google_scholar and filter by 'author:' for relevant results
+    private Author searchAuthorById(String authorId) throws IOException {
         String url = String.format(
-                "%s?engine=google_scholar&q=author:%s&api_key=%s&hl=en&gl=us",
+                "%s?engine=google_scholar_author&author_id=%s&api_key=%s&hl=en&gl=us",
                 BASE_URL,
-                query.replace(" ", "+"),
+                authorId,
                 API_KEY
         );
 
@@ -69,42 +65,69 @@ public class AuthorController {
             HttpGet request = new HttpGet(url);
 
             try (CloseableHttpResponse response = httpClient.execute(request)) {
-
                 int status = response.getStatusLine().getStatusCode();
-
                 if (status != 200) {
-                    view.displayError("HTTP Error: " + status + " while querying the API.");
-                    return Collections.emptyList();
+                    view.displayError("HTTP Error: " + status);
+                    return null;
                 }
 
                 String jsonResponse = EntityUtils.toString(response.getEntity());
 
-                // 💡 REAL JSON PARSING (Using SearchResponse.java and Gson)
                 Gson gson = new Gson();
-                SearchResponse searchResponse = gson.fromJson(jsonResponse, SearchResponse.class);
+                // SerpAPI devuelve directamente el perfil del autor con sus publicaciones
+                AuthorProfileResponse profile = gson.fromJson(jsonResponse, AuthorProfileResponse.class);
 
-                // Transform SearchResponse results into the Author model
-                return transformResults(searchResponse);
+                if (profile == null || profile.author == null) {
+                    return null;
+                }
+
+                Author author = new Author(
+                        profile.author.authorId,
+                        profile.author.name,
+                        profile.author.affiliations,
+                        profile.citedBy != null ? profile.citedBy.value : 0
+                );
+
+                if (profile.articles != null) {
+                    List<Publication> publications = profile.articles.stream()
+                            .map(article -> {
+                                Publication pub = new Publication();
+                                pub.setTitle(article.title);
+                                pub.setLink(article.link);
+                                pub.setCitations(article.citedBy != null ? article.citedBy.value : 0);
+                                return pub;
+                            })
+                            .collect(Collectors.toList());
+                    author.setPublications(publications);
+                }
+
+                return author;
             }
         }
     }
 
     /**
-     * Transforms JSON results (SearchResponse.AuthorSearchResult) into our Author model.
+     * Clase auxiliar para mapear el JSON de SerpAPI
      */
-    private List<Author> transformResults(SearchResponse response) {
-        if (response.getAuthorResults() == null || response.getAuthorResults().isEmpty()) {
-            return Collections.emptyList();
+    private static class AuthorProfileResponse {
+        private AuthorData author;
+        private Citation citedBy;
+        private List<Article> articles;
+
+        private static class AuthorData {
+            private String authorId;
+            private String name;
+            private String affiliations;
         }
 
-        // Map each SearchResult to a simple Author object
-        return response.getAuthorResults().stream()
-                .map(result -> new Author(
-                        null, // ID not available in this type of search
-                        result.getName(),
-                        result.getAffiliation(),
-                        result.getCitedBy()
-                ))
-                .collect(Collectors.toList());
+        private static class Citation {
+            private int value;
+        }
+
+        private static class Article {
+            private String title;
+            private String link;
+            private Citation citedBy;
+        }
     }
 }

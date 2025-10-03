@@ -18,7 +18,8 @@ public class AuthorView {
      */
     public String getSearchQuery() {
         System.out.println("\n--- Google Scholar Author Search ---");
-        System.out.print("Enter author name to search: ");
+        System.out.print("Enter author ID to search: ");
+
         return scanner.nextLine().trim();
     }
 
