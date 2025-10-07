@@ -1,5 +1,6 @@
 package org.example.controller;
 
+import org.example.model.ArticleDAO;
 import org.example.view.AuthorView;
 import org.example.model.Author;
 import org.example.model.Publication;
@@ -16,6 +17,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
+
 public class AuthorController {
 
     private final String API_KEY = "619324adda98afcccd33191b4106bc08cab6be29b7180d5304c8067b585a568d";
@@ -27,21 +29,55 @@ public class AuthorController {
         this.view = view;
     }
 
+
     public void startSearchProcess() {
         try {
-            String authorId = view.getSearchQuery(); // ahora pedirá el ID
+            final int researchersToProcess = 2; // 2 investigadores
+            for (int i = 1; i <= researchersToProcess; i++) {
+                System.out.println("\n--- Researcher " + i + " of " + researchersToProcess + " ---");
+                String authorId = view.getSearchQuery(); // pide ID (igual vista actual)
 
-            if (authorId == null || authorId.isBlank()) {
-                view.displayError("Author ID cannot be empty.");
-                return;
-            }
+                if (authorId == null || authorId.isBlank()) {
+                    view.displayError("Author ID cannot be empty. Skipping.");
+                    continue;
+                }
 
-            Author author = searchAuthorById(authorId);
-            if (author != null) {
-                view.displayResults(Collections.singletonList(author));
-            } else {
-                view.displayError("No author found with that ID.");
-            }
+                Author author = searchAuthorById(authorId);
+                if (author != null) {
+
+                    // === CORRECCIÓN CLAVE AQUÍ ===
+                    // Si el AuthorId de la respuesta JSON es nulo, usamos el ID que el usuario ingresó.
+                    if (author.getAuthorId() == null || author.getAuthorId().isBlank()) {
+                        author.setAuthorId(authorId); // Asigna el ID ingresado al objeto Author
+                    }
+                    // ==============================
+
+                    view.displayResults(Collections.singletonList(author));
+
+                    // Guarda (o recupera) el researcher en la tabla researchers
+                    int researcherId = ArticleDAO.insertResearcherIfNotExists(
+                            author.getAuthorId(), // <-- Ahora garantizas que no es null
+                            author.getName(),
+                            author.getAffiliation(),
+                            author.getTotalCitations()
+                    );
+
+                    // Guardar hasta 3 artículos por investigador
+                    if (author.getPublications() != null) {
+                        List<Publication> toSave = author.getPublications().stream().limit(3).collect(Collectors.toList());
+                        for (Publication pub : toSave) {
+                            ArticleDAO.insertArticle(pub, author.getName(), researcherId);
+                            // pequeña pausa para respetar límites de la API (opcional)
+                            try { Thread.sleep(500); } catch (InterruptedException e) { /* ignore */ }
+                        }
+                    } else {
+                        System.out.println("No publications to save for this author.");
+                    }
+                } else {
+                    view.displayError("No author found with that ID.");
+                }
+
+            } // end for
 
         } catch (IOException e) {
             view.displayError("I/O Error (Network): " + e.getMessage());
@@ -49,6 +85,7 @@ public class AuthorController {
             view.displayError("Unexpected error: " + e.getMessage());
         }
     }
+
 
     /**
      * Busca directamente el perfil de un autor por su ID de Google Scholar
@@ -81,6 +118,8 @@ public class AuthorController {
                     return null;
                 }
 
+                // NOTA: Si el campo 'authorId' en la respuesta JSON es en realidad 'scholar_id' u otro nombre,
+                // el constructor recibirá 'null' aquí. La corrección se hace en startSearchProcess().
                 Author author = new Author(
                         profile.author.authorId,
                         profile.author.name,
@@ -115,7 +154,7 @@ public class AuthorController {
         private List<Article> articles;
 
         private static class AuthorData {
-            private String authorId;
+            private String authorId; // <-- POSIBLE PUNTO DE FALLA. Si la API usa 'scholar_id', esto será null.
             private String name;
             private String affiliations;
         }
